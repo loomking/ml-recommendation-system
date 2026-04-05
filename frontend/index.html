@@ -1,0 +1,256 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="description" content="RecoAI — Real-time ML-powered movie recommendation engine with hybrid collaborative and content-based filtering, full observability, and evaluation metrics.">
+    <title>RecoAI — ML Movie Recommendations</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800;900&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="/static/styles.css">
+    <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🎬</text></svg>">
+</head>
+<body>
+
+    <!-- ─── Header ─────────────────────────────────────────────────────── -->
+    <header class="header" id="main-header">
+        <div class="header-left">
+            <div class="logo" id="logo">
+                <span class="logo-icon">🎬</span>
+                <span class="logo-text">Reco<span class="logo-accent">AI</span></span>
+            </div>
+        </div>
+        <div class="header-center">
+            <div class="search-box" id="search-box">
+                <svg class="search-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                    <circle cx="11" cy="11" r="8"/><path d="m21 21-4.35-4.35"/>
+                </svg>
+                <input type="text" id="search-input" placeholder="Search movies..." autocomplete="off">
+                <div class="search-results" id="search-results"></div>
+            </div>
+        </div>
+        <div class="header-right">
+            <button class="metrics-btn" id="metrics-btn" title="System Metrics & Observability">
+                <span>📊</span> Metrics
+            </button>
+            <div class="ws-status" id="ws-status" title="WebSocket Status">
+                <span class="ws-dot disconnected" id="ws-dot"></span>
+                <span id="ws-label">Disconnected</span>
+            </div>
+            <div class="stats-badge" id="stats-badge">
+                <span class="stats-dot"></span>
+                <span id="stats-text">ML Engine Active</span>
+            </div>
+            <div class="user-switcher" id="user-switcher">
+                <div class="user-avatar" id="current-user-avatar"></div>
+                <span class="user-name" id="current-user-name">Select User</span>
+                <svg class="chevron" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                    <path d="m6 9 6 6 6-6"/>
+                </svg>
+                <div class="user-dropdown" id="user-dropdown"></div>
+            </div>
+        </div>
+    </header>
+
+    <!-- ─── Main Content ───────────────────────────────────────────────── -->
+    <main class="main" id="main-content">
+
+        <!-- Hero: Personalized Recommendations -->
+        <section class="section section-hero" id="section-recommendations">
+            <div class="section-header">
+                <div class="section-title-group">
+                    <h1 class="section-title">
+                        <span class="section-icon">✨</span>
+                        Recommended For You
+                    </h1>
+                    <p class="section-subtitle" id="rec-subtitle">Powered by hybrid ML — content-based + collaborative filtering</p>
+                </div>
+                <div class="model-info" id="model-info">
+                    <div class="model-badge">
+                        <span class="model-dot content-dot"></span>
+                        Content-Based
+                    </div>
+                    <span class="model-plus">+</span>
+                    <div class="model-badge">
+                        <span class="model-dot collab-dot"></span>
+                        Collaborative
+                    </div>
+                    <div class="inference-badge" id="inference-badge" title="Last inference time">
+                        <span>⚡</span> <span id="inference-time">--</span>ms
+                    </div>
+                </div>
+            </div>
+            <div class="movie-row" id="recommendations-row">
+                <div class="loading-container"><div class="loading-spinner"></div><p>Loading recommendations...</p></div>
+            </div>
+        </section>
+
+        <!-- Trending Movies -->
+        <section class="section" id="section-trending">
+            <div class="section-header">
+                <h2 class="section-title"><span class="section-icon">🔥</span> Trending Now</h2>
+            </div>
+            <div class="movie-row" id="trending-row">
+                <div class="loading-container"><div class="loading-spinner"></div><p>Loading trending...</p></div>
+            </div>
+        </section>
+
+        <!-- Top Rated -->
+        <section class="section" id="section-top-rated">
+            <div class="section-header">
+                <h2 class="section-title"><span class="section-icon">⭐</span> Top Rated</h2>
+            </div>
+            <div class="movie-row" id="top-rated-row">
+                <div class="loading-container"><div class="loading-spinner"></div><p>Loading top rated...</p></div>
+            </div>
+        </section>
+
+        <!-- Browse by Genre -->
+        <section class="section" id="section-browse">
+            <div class="section-header">
+                <h2 class="section-title"><span class="section-icon">🎭</span> Browse Movies</h2>
+            </div>
+            <div class="genre-tabs" id="genre-tabs"></div>
+            <div class="movie-grid" id="browse-grid">
+                <div class="loading-container"><div class="loading-spinner"></div><p>Loading movies...</p></div>
+            </div>
+            <div class="pagination" id="pagination"></div>
+        </section>
+
+    </main>
+
+    <!-- ─── Activity Feed (Floating) ───────────────────────────────────── -->
+    <div class="activity-feed" id="activity-feed">
+        <div class="activity-header">
+            <span class="activity-icon">📡</span>
+            <span>Live Activity</span>
+            <button class="activity-toggle" id="activity-toggle">−</button>
+        </div>
+        <div class="activity-list" id="activity-list">
+            <div class="activity-item activity-empty">Waiting for activity...</div>
+        </div>
+    </div>
+
+    <!-- ─── Movie Detail Modal ─────────────────────────────────────────── -->
+    <div class="modal-overlay" id="movie-modal">
+        <div class="modal-card" id="modal-card">
+            <button class="modal-close" id="modal-close">&times;</button>
+            <div class="modal-poster" id="modal-poster"></div>
+            <div class="modal-content">
+                <h2 class="modal-title" id="modal-title"></h2>
+                <div class="modal-meta" id="modal-meta"></div>
+                <div class="modal-genres" id="modal-genres"></div>
+                <p class="modal-desc" id="modal-desc"></p>
+                <div class="modal-cast" id="modal-cast"></div>
+                <div class="modal-rating-section">
+                    <h3>Your Rating</h3>
+                    <div class="star-rating" id="modal-stars">
+                        <span class="star" data-value="1">★</span>
+                        <span class="star" data-value="2">★</span>
+                        <span class="star" data-value="3">★</span>
+                        <span class="star" data-value="4">★</span>
+                        <span class="star" data-value="5">★</span>
+                    </div>
+                    <span class="rating-label" id="rating-label">Click to rate</span>
+                </div>
+                <div class="modal-similar">
+                    <h3>Similar Movies</h3>
+                    <div class="similar-row" id="similar-row"></div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- ─── Explanation Modal ──────────────────────────────────────────── -->
+    <div class="modal-overlay" id="explain-modal">
+        <div class="modal-card explain-card">
+            <button class="modal-close" id="explain-close">&times;</button>
+            <div class="explain-content" id="explain-content">
+                <div class="loading-container"><div class="loading-spinner"></div><p>Loading explanation...</p></div>
+            </div>
+        </div>
+    </div>
+
+    <!-- ─── Metrics Dashboard Modal ────────────────────────────────────── -->
+    <div class="modal-overlay" id="metrics-modal">
+        <div class="modal-card metrics-card">
+            <button class="modal-close" id="metrics-close">&times;</button>
+            <div class="metrics-content">
+                <h2 class="metrics-title">📊 System Observability Dashboard</h2>
+                <p class="metrics-subtitle">Real-time metrics from the ML recommendation pipeline</p>
+
+                <div class="metrics-tabs">
+                    <button class="metrics-tab active" data-tab="performance">⚡ API Performance</button>
+                    <button class="metrics-tab" data-tab="ml">🧠 ML Evaluation</button>
+                    <button class="metrics-tab" data-tab="system">🔧 System Health</button>
+                </div>
+
+                <!-- Tab: API Performance -->
+                <div class="metrics-panel active" id="panel-performance">
+                    <div class="metrics-grid">
+                        <div class="metric-card">
+                            <div class="metric-label">Total Requests</div>
+                            <div class="metric-value" id="m-total-requests">--</div>
+                        </div>
+                        <div class="metric-card">
+                            <div class="metric-label">Recommendations Generated</div>
+                            <div class="metric-value" id="m-total-recs">--</div>
+                        </div>
+                        <div class="metric-card">
+                            <div class="metric-label">Ratings Submitted</div>
+                            <div class="metric-value" id="m-total-ratings">--</div>
+                        </div>
+                        <div class="metric-card">
+                            <div class="metric-label">Uptime</div>
+                            <div class="metric-value" id="m-uptime">--</div>
+                        </div>
+                    </div>
+                    <h3 class="metrics-section-title">Endpoint Latency (ms)</h3>
+                    <div class="latency-table-wrapper">
+                        <table class="latency-table" id="latency-table">
+                            <thead><tr><th>Endpoint</th><th>Count</th><th>Avg</th><th>P50</th><th>P95</th><th>P99</th></tr></thead>
+                            <tbody id="latency-tbody"></tbody>
+                        </table>
+                    </div>
+                    <h3 class="metrics-section-title">Model Inference Breakdown</h3>
+                    <div class="inference-breakdown" id="inference-breakdown"></div>
+                </div>
+
+                <!-- Tab: ML Evaluation -->
+                <div class="metrics-panel" id="panel-ml">
+                    <div class="eval-header">
+                        <p>Offline evaluation using <strong>hold-out temporal split</strong> (80/20) with relevance threshold ≥ 3.5</p>
+                        <button class="eval-rerun-btn" id="eval-rerun-btn">🔄 Re-run Evaluation</button>
+                    </div>
+                    <h3 class="metrics-section-title">Ranking Metrics</h3>
+                    <table class="eval-table" id="eval-table">
+                        <thead><tr><th>K</th><th>Precision@K</th><th>Recall@K</th><th>NDCG@K</th><th>Hit Rate@K</th></tr></thead>
+                        <tbody id="eval-tbody"></tbody>
+                    </table>
+                    <h3 class="metrics-section-title">System Metrics</h3>
+                    <div class="metrics-grid" id="eval-system-metrics"></div>
+                    <div class="eval-meta" id="eval-meta"></div>
+                </div>
+
+                <!-- Tab: System Health -->
+                <div class="metrics-panel" id="panel-system">
+                    <h3 class="metrics-section-title">Cache Performance</h3>
+                    <div class="metrics-grid" id="cache-metrics"></div>
+                    <h3 class="metrics-section-title">Background Training</h3>
+                    <div class="metrics-grid" id="training-metrics"></div>
+                    <h3 class="metrics-section-title">WebSocket</h3>
+                    <div class="metrics-grid" id="ws-metrics"></div>
+                    <h3 class="metrics-section-title">Health Check</h3>
+                    <div class="health-status" id="health-status"></div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- ─── Toast Notifications ────────────────────────────────────────── -->
+    <div class="toast-container" id="toast-container"></div>
+
+    <script src="/static/app.js"></script>
+</body>
+</html>
