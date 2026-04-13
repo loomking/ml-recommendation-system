@@ -1,0 +1,14 @@
+# Render deployment config
+# https://render.com/docs/deploy-an-image
+
+services:
+  - type: web
+    name: recoai
+    runtime: docker
+    dockerfilePath: ./Dockerfile
+    plan: free
+    envVars:
+      - key: PYTHONUNBUFFERED
+        value: "1"
+      - key: PYTHONIOENCODING
+        value: "utf-8"
