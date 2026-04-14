@@ -1,264 +1,113 @@
-# 🎬 RecoAI — Real-Time ML-Powered Recommendation System
+# RecoAI — Movie Recommendation System
 
-A production-grade movie recommendation system built end-to-end with **hybrid ML** (content-based + collaborative filtering), **real-time WebSocket updates**, **full observability**, and **ML evaluation metrics**.
+A real-time movie recommendation system that uses a hybrid approach combining content-based filtering and collaborative filtering to suggest movies. Built with FastAPI for the backend, vanilla JS frontend, and scikit-learn for the ML pipeline.
 
-> **Not a tutorial project.** This system demonstrates real ML engineering: offline evaluation with Precision@K/NDCG@K, inference-time instrumentation, cache-aware request flow, and dynamic model weight tuning based on user profile maturity.
+**Live demo**: [ml-recommendation-system.onrender.com](https://ml-recommendation-system.onrender.com)
 
----
+## What it does
 
-## 🏗️ Architecture
+- Recommends movies based on what you've liked before and what similar users enjoy
+- Updates recommendations in real-time when you rate a movie (via WebSocket)
+- Shows a match percentage for each recommendation with a full scoring breakdown
+- Tracks system metrics like API latency, cache performance, and model inference times
+
+## How the recommendation works
+
+The system uses two approaches and combines them:
+
+**Content-based filtering** — looks at movie metadata (genres, description, director) and finds similar movies using TF-IDF vectors and cosine similarity. Good for new users since it doesn't need much data.
+
+**Collaborative filtering** — uses SVD matrix factorization on the user-item rating matrix to find patterns. Works better when there's enough rating data from the user.
+
+These are combined with dynamic weights that change based on how many ratings a user has:
+- New users (< 5 ratings): 85% content-based, 15% collaborative
+- Established users (20+ ratings): 35% content-based, 65% collaborative
+- In between: weights transition linearly
+
+## Tech stack
+
+- **Backend**: Python, FastAPI, Uvicorn
+- **ML**: scikit-learn (TF-IDF, TruncatedSVD, cosine similarity)
+- **Database**: SQLite with WAL mode
+- **Frontend**: HTML, CSS, JavaScript (no frameworks)
+- **Deployment**: Docker, Render
+- **Caching**: In-memory TTL cache (designed to be swappable with Redis)
+
+## Project structure
 
 ```
-User Request → FastAPI → [TTL Cache Check] → Hybrid ML Engine → [Cache Store] → Response
-                  ↓                              ↓                    ↓
-           Metrics Middleware           Content-Based + SVD      WebSocket Push
-                  ↓                     (TF-IDF)   (Matrix       (real-time)
-           Latency Tracking              Cosine     Factorization)
-                  ↓                        ↓            ↓
-           /api/metrics              Dynamic Weight Combiner
-                                    (cold-start aware)
+├── run.py                  # entry point - runs everything
+├── data/
+│   ├── generate_dataset.py # creates synthetic movie/user/rating data
+│   └── seed_db.py          # loads data into sqlite
+├── ml/
+│   ├── content_based.py    # TF-IDF + cosine similarity
+│   ├── collaborative.py    # SVD matrix factorization
+│   ├── hybrid.py           # combines both with dynamic weights
+│   ├── evaluation.py       # precision@k, ndcg, recall metrics
+│   └── trainer.py          # training pipeline + background retrainer
+├── server/
+│   ├── app.py              # FastAPI app (REST + WebSocket)
+│   ├── database.py         # sqlite operations
+│   ├── models.py           # pydantic schemas
+│   ├── cache.py            # TTL cache layer
+│   └── metrics.py          # latency and performance tracking
+├── frontend/
+│   ├── index.html
+│   ├── styles.css
+│   └── app.js
+├── Dockerfile
+└── docker-compose.yml
 ```
 
-```
-┌─────────────────────────────────────────────────────────────────────┐
-│                        Frontend (HTML/CSS/JS)                       │
-│  ┌──────────┐ ┌──────────┐ ┌──────────┐ ┌────────────────────────┐ │
-│  │ Movie    │ │ Star     │ │ Search & │ │ Observability          │ │
-│  │ Browser  │ │ Ratings  │ │ Filters  │ │ Dashboard (metrics,    │ │
-│  │          │ │          │ │          │ │ eval, health)          │ │
-│  └────┬─────┘ └────┬─────┘ └────┬─────┘ └────────┬───────────────┘ │
-│       │             │            │                 │                 │
-│       └─────────────┴────────────┴─────────────────┘                │
-│                           │ WebSocket │ REST API                    │
-└───────────────────────────┴──────┬────┴─────────────────────────────┘
-                                   │
-┌──────────────────────────────────┴──────────────────────────────────┐
-│                      Backend (FastAPI + Python)                      │
-│  ┌──────────┐ ┌──────────┐ ┌──────────────┐ ┌───────────────────┐  │
-│  │ REST API │ │ WebSocket│ │ Metrics      │ │ Background        │  │
-│  │ 18+      │ │ Server   │ │ Middleware   │ │ Trainer (5-min    │  │
-│  │ endpoints│ │ (per-user│ │ (latency,    │ │ retraining cycle) │  │
-│  │          │ │ channels)│ │ inference)   │ │                   │  │
-│  └────┬─────┘ └────┬─────┘ └──────┬───────┘ └─────────┬─────────┘  │
-│       │             │              │                    │            │
-│  ┌────┴─────────────┴──────────────┴────────────────────┴────────┐  │
-│  │                    Hybrid ML Engine                            │  │
-│  │  ┌─────────────────┐    ┌──────────────────┐                  │  │
-│  │  │ Content-Based   │    │ Collaborative    │                  │  │
-│  │  │ TF-IDF + Cosine │    │ TruncatedSVD     │                  │  │
-│  │  │ Similarity      │    │ 49 latent factors│                  │  │
-│  │  └────────┬────────┘    └────────┬─────────┘                  │  │
-│  │           └──────────┬───────────┘                            │  │
-│  │              Dynamic Weight Combiner                          │  │
-│  │         (cold: 85/15 → warm: transition → established: 35/65)│  │
-│  └───────────────────────────────────────────────────────────────┘  │
-│                              │                                      │
-│  ┌───────────────┐  ┌───────┴───────┐  ┌─────────────────────────┐ │
-│  │ TTL Cache     │  │ SQLite DB     │  │ Model Artifacts         │ │
-│  │ (LRU, 60s)   │  │ (WAL mode)    │  │ (joblib serialized)     │ │
-│  │ Redis-swappable│ │               │  │                         │ │
-│  └───────────────┘  └───────────────┘  └─────────────────────────┘ │
-└─────────────────────────────────────────────────────────────────────┘
-```
+## Running locally
 
----
-
-## 🧠 ML Methodology
-
-### Content-Based Filtering
-- **Approach**: TF-IDF vectorization on concatenated movie metadata (genres × 3 + description + director)
-- **Similarity**: Cosine similarity on 500×500 matrix (5,000 max TF-IDF features, bigrams)
-- **Cold-start**: Genre profile vectors (averaged TF-IDF per genre) for new users
-
-### Collaborative Filtering
-- **Approach**: TruncatedSVD matrix factorization on 50×500 user-item rating matrix
-- **Latent Factors**: 49 components capturing user/item interaction patterns
-- **Prediction**: Reconstructed rating = user_factors @ item_factors
-
-### Hybrid Combination
-Dynamic weighting based on user profile maturity:
-
-| Profile | Ratings | Content Weight | Collab Weight | Rationale |
-|---------|---------|---------------|---------------|-----------|
-| Cold Start | < 5 | 85% | 15% | Not enough interaction data for CF to be reliable |
-| Warm | 5-20 | Linear transition | Linear transition | Gradually trust CF as data accumulates |
-| Established | 20+ | 35% | 65% | CF captures nuanced taste patterns better |
-
-### Offline Evaluation
-Hold-out temporal split (80/20) with relevance threshold ≥ 3.5:
-
-| Metric | @5 | @10 | @20 |
-|--------|-----|------|------|
-| **Precision** | Measured | Measured | Measured |
-| **Recall** | Measured | Measured | Measured |
-| **NDCG** | Measured | Measured | Measured |
-| **Hit Rate** | Measured | Measured | Measured |
-
-Additional metrics: **Catalog Coverage** (% of items recommended) and **Genre Diversity** (avg distinct genres per recommendation set).
-
-> Run live evaluation: `POST /api/evaluation/run`  
-> View results: `GET /api/evaluation`
-
----
-
-## ⚡ System Design
-
-### Request Flow
-```
-1. Client sends GET /api/recommendations/{user_id}
-2. Metrics middleware starts latency timer
-3. TTL Cache lookup (60s TTL, LRU eviction)
-   → Cache HIT: return immediately (~0.5ms)
-   → Cache MISS: continue to step 4
-4. Load user's rated movies from SQLite (WAL mode for concurrent reads)
-5. Determine user profile (cold/warm/established) → select weights
-6. Content-based inference: cosine similarity aggregation (~2ms)
-7. Collaborative inference: SVD factor dot product (~1ms)
-8. Hybrid score normalization and combination
-9. Fetch movie details for top-N recommendations
-10. Store in cache, return response
-11. Metrics middleware records endpoint latency + inference breakdown
-```
-
-### Why This Cache Design?
-- **TTL Cache (not Redis)**: Single-instance deployment, no external dependencies
-- **Same interface as Redis**: `get(key)`, `set(key, value, ttl)`, `invalidate_user(id)`
-- **Swap for production**: Replace `TTLCache` with `redis.Redis` — API is identical
-- **Invalidation**: Rating submission invalidates that user's cache + clears trending cache
-
-### Real-Time Updates (Not Fake)
-- **WebSocket per user**: `ws://host/ws/{user_id}` — persistent bidirectional connection
-- **Event flow**: User rates movie → API saves → cache invalidated → ML re-scores → WebSocket pushes new recommendations
-- **Activity broadcast**: All connected users see live activity feed (who rated what)
-- **Keepalive**: 30-second ping/pong to detect stale connections
-
----
-
-## 📊 Observability
-
-### Tracked Metrics (via `/api/metrics`)
-
-| Category | Metrics |
-|----------|---------|
-| **API Latency** | Per-endpoint: count, avg, P50, P95, P99, min, max (ms) |
-| **Model Inference** | Total, content-based, collaborative breakdown (ms) |
-| **Cache** | Hits, misses, hit rate, total lookups |
-| **Training** | Cycle count, avg duration, last trained timestamp |
-| **WebSocket** | Active connections, total connections, messages sent |
-| **System** | Uptime, total requests, recommendations generated, ratings submitted |
-
-### Production-Ready Design
-Current implementation uses in-process metrics (bounded deques). For production:
-- Swap `MetricsCollector` → Prometheus client library
-- Export via `/metrics` in OpenMetrics format
-- Scrape with Prometheus → Grafana dashboards
-- The metric names and semantics are already aligned with Prometheus conventions
-
----
-
-## 🚀 Quick Start
-
-### Local Development
 ```bash
-# Install dependencies
 pip install -r requirements.txt
-
-# Run everything (generates data → seeds DB → trains models → starts server)
 python run.py
-
-# Open http://localhost:8000
+# open http://localhost:8000
 ```
 
-### Docker
+First run takes ~30s because it generates data and trains the models. After that it starts in a couple seconds.
+
+## Running with Docker
+
 ```bash
 docker-compose up --build
-# Models are trained at build time → instant startup
 ```
 
-### API Documentation
-```
-http://localhost:8000/docs    # Interactive Swagger UI
-```
+## API endpoints
 
----
+Some of the main ones:
 
-## 📁 Project Structure
+| Endpoint | What it does |
+|----------|-------------|
+| `GET /api/recommendations/{user_id}` | Get personalized recommendations |
+| `GET /api/recommendations/{user_id}/explain/{movie_id}` | See why a movie was recommended |
+| `POST /api/ratings` | Submit a rating (triggers real-time update) |
+| `GET /api/metrics` | System performance metrics |
+| `GET /api/evaluation` | ML evaluation results |
+| `GET /api/health` | Health check |
+| `WS /ws/{user_id}` | WebSocket for live updates |
 
-```
-ml-recommendation-system/
-├── run.py                    # Entry point (orchestrates everything)
-├── requirements.txt          # Python dependencies
-├── Dockerfile                # Multi-stage Docker build
-├── docker-compose.yml        # One-command deployment
-│
-├── data/
-│   ├── generate_dataset.py   # Synthetic data generator (500 movies, 50 users, 10K ratings)
-│   ├── seed_db.py            # SQLite database seeder
-│   └── generated/            # JSON data files (movies, users, ratings)
-│
-├── ml/
-│   ├── content_based.py      # TF-IDF + cosine similarity engine
-│   ├── collaborative.py      # SVD matrix factorization engine
-│   ├── hybrid.py             # Dynamic-weight hybrid combiner
-│   ├── evaluation.py         # Precision@K, Recall@K, NDCG@K, Coverage, Diversity
-│   └── trainer.py            # Training pipeline + background retrainer
-│
-├── server/
-│   ├── app.py                # FastAPI (18+ endpoints, WebSocket, middleware)
-│   ├── database.py           # SQLite CRUD operations
-│   ├── models.py             # Pydantic request/response schemas
-│   ├── metrics.py            # Observability collector (latency, inference, cache)
-│   └── cache.py              # TTL LRU cache (Redis-swappable)
-│
-├── frontend/
-│   ├── index.html            # SPA with metrics dashboard + explanation panels
-│   ├── styles.css            # Dark glassmorphism design system
-│   └── app.js                # Interactive frontend (WS, ratings, metrics, explanations)
-│
-├── models/                   # Serialized model artifacts (joblib)
-└── app.db                    # SQLite database
-```
+Full docs at `/docs` (Swagger UI).
 
----
+## Evaluation
 
-## 🔑 Key API Endpoints
+The system runs offline evaluation using a hold-out split (80% train, 20% test). It measures:
 
-| Method | Endpoint | Purpose |
-|--------|----------|---------|
-| `GET` | `/api/recommendations/{user_id}` | Personalized hybrid recommendations with scoring metadata |
-| `GET` | `/api/recommendations/{user_id}/explain/{movie_id}` | Full scoring breakdown (weights, similarities, predicted rating) |
-| `POST` | `/api/ratings` | Submit rating → triggers real-time recommendation refresh |
-| `GET` | `/api/metrics` | Full observability data (latency, inference, cache, training) |
-| `GET` | `/api/evaluation` | Offline ML metrics (P@K, R@K, NDCG@K, Coverage, Diversity) |
-| `POST` | `/api/evaluation/run` | Re-run offline evaluation |
-| `GET` | `/api/health` | Component health check |
-| `WS` | `/ws/{user_id}` | Real-time recommendation push + activity streaming |
+- **Precision@K** — how many of the top-K recommendations are actually relevant
+- **Recall@K** — how many relevant items appear in the top-K
+- **NDCG@K** — how well the ranking order matches ideal ranking
+- **Catalog coverage** — what percentage of movies get recommended
+- **Genre diversity** — how diverse the recommendations are
 
----
+You can re-run evaluation from the dashboard or via `POST /api/evaluation/run`.
 
-## 🛠️ Tech Stack
+## Things I'd change for production
 
-| Layer | Technology | Why |
-|-------|-----------|-----|
-| Backend | FastAPI + Uvicorn | Async, high-performance, native WebSocket support |
-| ML | scikit-learn (TF-IDF, TruncatedSVD, cosine_similarity) | Industry-standard, efficient for this scale |
-| Data | SQLite (WAL mode) | Zero-config, concurrent reads, sufficient for single-instance |
-| Cache | In-memory LRU + TTL | Same API as Redis, zero external deps for dev |
-| Frontend | Vanilla HTML/CSS/JS | No framework overhead, full control |
-| Deployment | Docker + Compose | Reproducible builds, one-command deploy |
-
----
-
-## 💡 Interview Talking Points
-
-1. **"How does the 65% match work?"** → Hybrid scoring: normalized content-based (cosine sim on TF-IDF vectors) + collaborative (SVD predicted ratings), dynamically weighted by user maturity. Click any match badge for full breakdown.
-
-2. **"How do you handle cold start?"** → Dynamic weight shifting. New users (< 5 ratings) get 85% content-based using genre preference profiles. As ratings accumulate, collaborative filtering weight increases linearly to 65%.
-
-3. **"Is the real-time actually real?"** → Yes. WebSocket per user. When a rating is submitted: cache is invalidated, ML engine re-scores, new recommendations are pushed over the WebSocket within the same request cycle. Activity is broadcast to all connected users.
-
-4. **"How do you know the recommendations are good?"** → Offline evaluation with hold-out temporal split. Precision@K measures relevance, NDCG@K measures ranking quality, Hit Rate@K measures coverage. All metrics available via API and UI dashboard.
-
-5. **"What about latency?"** → Full request pipeline instrumented. Content-based inference ~2ms, collaborative ~1ms, total hybrid ~5ms. P95 endpoint latency tracked per endpoint. Cache reduces repeated queries to ~0.5ms.
-
-6. **"How would you scale this?"** → Cache layer is Redis-swappable (same interface). Models can be served via separate inference service. Training pipeline already decoupled (background thread → separate worker). SQLite → PostgreSQL for multi-instance.
+- Replace the in-memory cache with Redis
+- Move the metrics collector to Prometheus + Grafana
+- Use PostgreSQL instead of SQLite for multi-instance support
+- Separate the training pipeline into its own worker/service
+- Add proper A/B testing for comparing model versions
