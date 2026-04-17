@@ -7,7 +7,9 @@ A real-time movie recommendation system that uses a hybrid approach combining co
 ## What it does
 
 - Recommends movies based on what you've liked before and what similar users enjoy
+- **Learns from your behavior** — genre preferences evolve dynamically as you rate movies
 - Updates recommendations in real-time when you rate a movie (via WebSocket)
+- Shows a **Taste DNA** profile with your current genre preferences and rising/falling trends
 - Shows a match percentage for each recommendation with a full scoring breakdown
 - Tracks system metrics like API latency, cache performance, and model inference times
 
@@ -23,6 +25,8 @@ These are combined with dynamic weights that change based on how many ratings a 
 - New users (< 5 ratings): 85% content-based, 15% collaborative
 - Established users (20+ ratings): 35% content-based, 65% collaborative
 - In between: weights transition linearly
+
+**Adaptive profiling** — user genre preferences are recomputed after every rating using recency-weighted scoring (exponential decay with 14-day half-life + rating-value signal). If you used to like Comedy but start rating Thriller movies, your profile updates in real-time and recommendations shift accordingly.
 
 ## Tech stack
 
@@ -84,11 +88,12 @@ Some of the main ones:
 |----------|-------------|
 | `GET /api/recommendations/{user_id}` | Get personalized recommendations |
 | `GET /api/recommendations/{user_id}/explain/{movie_id}` | See why a movie was recommended |
-| `POST /api/ratings` | Submit a rating (triggers real-time update) |
+| `POST /api/ratings` | Submit a rating (triggers profile recomputation + real-time update) |
+| `GET /api/users/{user_id}/profile` | Get dynamic taste profile with genre scores and evolution |
 | `GET /api/metrics` | System performance metrics |
 | `GET /api/evaluation` | ML evaluation results |
 | `GET /api/health` | Health check |
-| `WS /ws/{user_id}` | WebSocket for live updates |
+| `WS /ws/{user_id}` | WebSocket for live updates (including `profile_updated` events) |
 
 Full docs at `/docs` (Swagger UI).
 

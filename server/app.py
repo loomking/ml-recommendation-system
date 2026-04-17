@@ -183,6 +183,8 @@ def get_engine():
 def generate_recommendations(user_id: int, n: int = 20):
     """Generate recommendations with full inference timing.
     
+    Uses dynamically computed genre preferences (not static ones).
+    
     Returns: (rec_movies, inference_timing_dict)
     """
     engine = get_engine()
@@ -195,6 +197,10 @@ def generate_recommendations(user_id: int, n: int = 20):
 
     liked_ids = db.get_user_rated_movie_ids(user_id, min_rating=3.5)
 
+    # Use dynamically computed genres instead of static preferred_genres
+    dynamic_profile = db.compute_dynamic_genres(user_id)
+    current_genres = [g for g, _ in dynamic_profile["genres"]]
+
     # ── Time the full inference pipeline ────────────────────────
     t_start = time.perf_counter()
 
@@ -203,7 +209,7 @@ def generate_recommendations(user_id: int, n: int = 20):
     content_recs = engine.content.get_recommendations_for_profile(
         liked_ids, n=n * 3
     ) if liked_ids else engine.content.get_genre_recommendations(
-        user.get("preferred_genres", []), n=n * 3
+        current_genres if current_genres else user.get("preferred_genres", []), n=n * 3
     )
     t_content = (time.perf_counter() - t_content_start) * 1000
 
@@ -212,11 +218,11 @@ def generate_recommendations(user_id: int, n: int = 20):
     collab_recs = engine.collab.get_recommendations(user_id, n=n * 3)
     t_collab = (time.perf_counter() - t_collab_start) * 1000
 
-    # Hybrid combination
+    # Hybrid combination — use dynamic genres
     recs = engine.get_recommendations(
         user_id=user_id,
         rated_movie_ids=liked_ids,
-        preferred_genres=user.get("preferred_genres", []),
+        preferred_genres=current_genres if current_genres else user.get("preferred_genres", []),
         n=n,
     )
 
@@ -247,6 +253,7 @@ def generate_recommendations(user_id: int, n: int = 20):
         "collab_ms": round(t_collab, 2),
         "weights": {"content": round(content_w, 2), "collaborative": round(collab_w, 2)},
         "user_profile": "cold_start" if n_ratings < 5 else ("warm" if n_ratings < 20 else "established"),
+        "current_genres": current_genres,
     }
 
     return rec_movies, timing
@@ -477,14 +484,42 @@ async def explain_recommendation(user_id: int, movie_id: int):
 
 @app.post("/api/ratings")
 async def submit_rating(rating: RatingCreate):
-    """Submit or update a movie rating. Triggers real-time recommendation refresh."""
+    """Submit or update a movie rating. Triggers genre recomputation + recommendation refresh."""
     movie = db.get_movie(rating.movie_id)
     if not movie:
         raise HTTPException(status_code=404, detail="Movie not found")
 
+    # Get old genres BEFORE adding the rating (for shift detection)
+    old_profile = db.compute_dynamic_genres(rating.user_id)
+    old_genres = set(g for g, _ in old_profile["genres"])
+
     result = db.add_rating(rating.user_id, rating.movie_id, rating.rating)
     db.add_event(rating.user_id, rating.movie_id, "rate")
     metrics.record_rating()
+
+    # ── Recompute dynamic genre preferences ──────────────────────
+    new_profile = db.compute_dynamic_genres(rating.user_id)
+    new_genre_names = [g for g, _ in new_profile["genres"]]
+    new_genres = set(new_genre_names)
+
+    # Persist updated genres to DB
+    if new_profile["has_enough_data"]:
+        db.update_user_preferred_genres(rating.user_id, new_genre_names)
+
+    # Detect taste shifts
+    gained = new_genres - old_genres
+    lost = old_genres - new_genres
+
+    # Push profile update via WebSocket
+    await ws_manager.send_to_user(rating.user_id, {
+        "type": "profile_updated",
+        "data": {
+            "genres": [{"name": g, "score": s} for g, s in new_profile["genres"]],
+            "total_ratings": new_profile["total_ratings"],
+            "gained": list(gained),
+            "lost": list(lost),
+        }
+    })
 
     # Invalidate cache and push updated recommendations
     rec_cache.invalidate_user(rating.user_id)
@@ -503,6 +538,12 @@ async def submit_rating(rating: RatingCreate):
         }
     })
 
+    # Include profile info in response
+    result["profile"] = {
+        "genres": [{"name": g, "score": s} for g, s in new_profile["genres"]],
+        "gained": list(gained),
+        "lost": list(lost),
+    }
     return result
 
 
@@ -539,14 +580,43 @@ async def get_users():
 
 @app.get("/api/users/{user_id}")
 async def get_user_detail(user_id: int):
-    """Get user details including their ratings."""
+    """Get user details including their ratings and dynamic profile."""
     user = db.get_user(user_id)
     if not user:
         raise HTTPException(status_code=404, detail="User not found")
     ratings = db.get_user_ratings(user_id)
     user["ratings"] = ratings
     user["rating_count"] = len(ratings)
+
+    # Include dynamic genre profile
+    profile = db.compute_dynamic_genres(user_id)
+    user["dynamic_genres"] = [{"name": g, "score": s} for g, s in profile["genres"]]
+    user["has_enough_data"] = profile["has_enough_data"]
     return user
+
+
+@app.get("/api/users/{user_id}/profile")
+async def get_user_profile(user_id: int):
+    """Get a user's dynamically computed taste profile.
+    
+    Returns current genre preferences (recency-weighted), genre evolution
+    (rising/falling trends), and rating statistics.
+    """
+    user = db.get_user(user_id)
+    if not user:
+        raise HTTPException(status_code=404, detail="User not found")
+
+    profile = db.compute_dynamic_genres(user_id)
+    evolution = db.get_genre_evolution(user_id)
+
+    return {
+        "user": {"id": user["id"], "name": user["name"]},
+        "genres": [{"name": g, "score": s} for g, s in profile["genres"]],
+        "all_scores": profile["genre_scores"],
+        "total_ratings": profile["total_ratings"],
+        "has_enough_data": profile["has_enough_data"],
+        "evolution": evolution,
+    }
 
 
 @app.get("/api/users/{user_id}/ratings")

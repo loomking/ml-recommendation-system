@@ -209,15 +209,19 @@ function renderUserDropdown() {
     state.users.forEach(user => {
         const option = document.createElement('div');
         option.className = `user-option ${state.currentUser?.id === user.id ? 'active' : ''}`;
+        // Use dynamic genres if available, otherwise fall back to static
+        const displayGenres = (user.dynamic_genres && user.dynamic_genres.length > 0)
+            ? user.dynamic_genres.map(g => g.name).join(', ')
+            : user.preferred_genres.join(', ');
         option.innerHTML = `
             <div class="user-avatar" style="background: ${user.avatar_color}">${user.name.charAt(0)}</div>
-            <div><div class="user-option-name">${user.name}</div><div class="user-option-genres">♥ ${user.preferred_genres.join(', ')}</div></div>`;
+            <div><div class="user-option-name">${user.name}</div><div class="user-option-genres">♥ ${displayGenres}</div></div>`;
         option.onclick = (e) => { e.stopPropagation(); selectUser(user); dropdown.classList.remove('active'); $('#user-switcher').classList.remove('open'); };
         dropdown.appendChild(option);
     });
 }
 
-function selectUser(user) {
+async function selectUser(user) {
     state.currentUser = user;
     $('#current-user-avatar').style.background = user.avatar_color;
     $('#current-user-avatar').textContent = user.name.charAt(0);
@@ -225,6 +229,7 @@ function selectUser(user) {
     renderUserDropdown();
     connectWebSocket();
     loadRecommendations();
+    loadTasteProfile();
     showToast(`Switched to ${user.name}`, 'success');
 }
 
@@ -281,6 +286,9 @@ function handleWSMessage(msg) {
                 if (msg.timing) updateTimingDisplay(msg.timing);
                 showToast('Recommendations updated in real-time!', 'info');
             }
+            break;
+        case 'profile_updated':
+            handleProfileUpdate(msg.data);
             break;
         case 'activity': addActivityItem(msg.data); break;
         case 'pong': break;
@@ -652,9 +660,144 @@ function initEventHandlers() {
         activityFeed.classList.toggle('collapsed');
         $('#activity-toggle').textContent = activityFeed.classList.contains('collapsed') ? '+' : '−';
     });
-
     // Logo
     $('#logo').addEventListener('click', () => window.scrollTo({ top: 0, behavior: 'smooth' }));
+}
+
+// ─── Taste Profile ──────────────────────────────────────────────────────
+
+async function loadTasteProfile() {
+    const profileEl = $('#taste-profile');
+    if (!state.currentUser) {
+        profileEl.style.display = 'none';
+        return;
+    }
+
+    const data = await api(`/api/users/${state.currentUser.id}/profile`);
+    if (!data) {
+        profileEl.style.display = 'none';
+        return;
+    }
+
+    renderTasteProfile(data.genres, data.total_ratings, data.evolution);
+}
+
+function renderTasteProfile(genres, totalRatings, evolution) {
+    const profileEl = $('#taste-profile');
+    const barsEl = $('#taste-bars');
+    const badgesEl = $('#taste-shift-badges');
+    const labelEl = $('#taste-label');
+    const evoEl = $('#taste-evolution');
+
+    if (!genres || genres.length === 0) {
+        profileEl.style.display = 'block';
+        barsEl.innerHTML = `
+            <div class="taste-profile-empty">
+                <p>🎬 Rate some movies to build your taste profile</p>
+                <p class="taste-empty-hint">Your genre preferences will evolve as you rate movies</p>
+            </div>`;
+        badgesEl.innerHTML = '';
+        evoEl.style.display = 'none';
+        labelEl.textContent = 'No ratings yet';
+        return;
+    }
+
+    profileEl.style.display = 'block';
+    labelEl.textContent = `Based on ${totalRatings} rating${totalRatings !== 1 ? 's' : ''}`;
+
+    // Render genre bars with animation
+    barsEl.innerHTML = '';
+    genres.forEach((genre, i) => {
+        const pct = Math.round(genre.score * 100);
+        const rank = i + 1;
+        const row = document.createElement('div');
+        row.className = 'taste-bar-row';
+        row.innerHTML = `
+            <span class="taste-bar-rank rank-${rank}">#${rank}</span>
+            <span class="taste-bar-label">${genre.name}</span>
+            <div class="taste-bar-track">
+                <div class="taste-bar-fill genre-${i}" style="width: 0%">
+                    <span class="taste-bar-score">${pct}%</span>
+                </div>
+            </div>`;
+        barsEl.appendChild(row);
+
+        // Animate the bar width after a delay
+        requestAnimationFrame(() => {
+            setTimeout(() => {
+                row.querySelector('.taste-bar-fill').style.width = `${pct}%`;
+            }, 50 + i * 80);
+        });
+    });
+
+    // Render evolution (rising/falling trends)
+    if (evolution && (evolution.rising.length > 0 || evolution.falling.length > 0)) {
+        evoEl.style.display = 'flex';
+        const risingEl = $('#evolution-rising');
+        const fallingEl = $('#evolution-falling');
+
+        if (evolution.rising.length > 0) {
+            risingEl.innerHTML = '📈 Rising: ' + evolution.rising.map(r =>
+                `<span class="evo-genre">${r.genre}</span>`
+            ).join(', ');
+        } else {
+            risingEl.innerHTML = '';
+        }
+
+        if (evolution.falling.length > 0) {
+            fallingEl.innerHTML = '📉 Cooling: ' + evolution.falling.map(r =>
+                `<span class="evo-genre">${r.genre}</span>`
+            ).join(', ');
+        } else {
+            fallingEl.innerHTML = '';
+        }
+    } else {
+        evoEl.style.display = 'none';
+    }
+}
+
+function handleProfileUpdate(data) {
+    // Render updated taste profile
+    renderTasteProfile(
+        data.genres,
+        data.total_ratings,
+        null  // Evolution will be fetched on next full load
+    );
+
+    // Show taste shift badges
+    const badgesEl = $('#taste-shift-badges');
+    badgesEl.innerHTML = '';
+
+    if (data.gained && data.gained.length > 0) {
+        data.gained.forEach(g => {
+            badgesEl.innerHTML += `<span class="taste-shift-badge gained">+ ${g}</span>`;
+        });
+    }
+    if (data.lost && data.lost.length > 0) {
+        data.lost.forEach(g => {
+            badgesEl.innerHTML += `<span class="taste-shift-badge lost">− ${g}</span>`;
+        });
+    }
+
+    // Show toast for taste shifts
+    if (data.gained.length > 0 || data.lost.length > 0) {
+        let msg = 'Taste profile updated';
+        if (data.gained.length > 0) msg += ` — +${data.gained.join(', ')}`;
+        if (data.lost.length > 0) msg += ` — -${data.lost.join(', ')}`;
+        showToast(msg, 'info');
+    }
+
+    // Update current user's genres in state & dropdown
+    if (state.currentUser && data.genres.length > 0) {
+        state.currentUser.dynamic_genres = data.genres;
+        state.currentUser.preferred_genres = data.genres.map(g => g.name);
+        renderUserDropdown();
+    }
+
+    // Clear shift badges after 5 seconds
+    setTimeout(() => {
+        badgesEl.innerHTML = '';
+    }, 5000);
 }
 
 // ─── Init ───────────────────────────────────────────────────────────────────

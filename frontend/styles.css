@@ -409,6 +409,192 @@ body::before {
 .health-status-badge.up { background: rgba(16, 185, 129, 0.15); color: var(--success); }
 .health-status-badge.down { background: rgba(239, 68, 68, 0.15); color: var(--error); }
 
+/* ─── Taste Profile Widget ──────────────────────────────────────────────── */
+
+.taste-profile {
+    margin-bottom: 20px;
+    padding: 20px 24px;
+    background: rgba(255, 255, 255, 0.03);
+    border: 1px solid var(--border);
+    border-radius: var(--card-radius);
+    backdrop-filter: blur(12px);
+    animation: fadeInUp 400ms ease-out;
+}
+
+.taste-profile-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    margin-bottom: 16px;
+    gap: 12px;
+    flex-wrap: wrap;
+}
+
+.taste-profile-title {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    font-size: 15px;
+    font-weight: 700;
+}
+
+.taste-icon { font-size: 18px; }
+
+.taste-label {
+    font-size: 11px;
+    font-weight: 400;
+    color: var(--text-tertiary);
+    margin-left: 4px;
+    padding: 2px 8px;
+    background: var(--surface);
+    border-radius: 8px;
+}
+
+.taste-shift-badges {
+    display: flex;
+    gap: 6px;
+    flex-wrap: wrap;
+}
+
+.taste-shift-badge {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    padding: 3px 10px;
+    border-radius: 12px;
+    font-size: 11px;
+    font-weight: 600;
+    animation: badgePop 400ms cubic-bezier(0.34, 1.56, 0.64, 1);
+}
+
+.taste-shift-badge.gained {
+    background: rgba(16, 185, 129, 0.15);
+    color: var(--success);
+    border: 1px solid rgba(16, 185, 129, 0.25);
+}
+
+.taste-shift-badge.lost {
+    background: rgba(239, 68, 68, 0.12);
+    color: var(--error);
+    border: 1px solid rgba(239, 68, 68, 0.2);
+}
+
+@keyframes badgePop {
+    0% { opacity: 0; transform: scale(0.5); }
+    100% { opacity: 1; transform: scale(1); }
+}
+
+.taste-bars {
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+}
+
+.taste-bar-row {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+}
+
+.taste-bar-label {
+    width: 80px;
+    font-size: 12px;
+    font-weight: 600;
+    color: var(--text-secondary);
+    text-align: right;
+    flex-shrink: 0;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+.taste-bar-track {
+    flex: 1;
+    height: 22px;
+    background: rgba(255, 255, 255, 0.04);
+    border-radius: 11px;
+    overflow: hidden;
+    position: relative;
+}
+
+.taste-bar-fill {
+    height: 100%;
+    border-radius: 11px;
+    transition: width 800ms cubic-bezier(0.34, 1.56, 0.64, 1);
+    position: relative;
+    display: flex;
+    align-items: center;
+    justify-content: flex-end;
+    padding-right: 8px;
+    min-width: 0;
+}
+
+.taste-bar-fill.genre-0 { background: linear-gradient(90deg, rgba(139, 92, 246, 0.4), #8b5cf6); }
+.taste-bar-fill.genre-1 { background: linear-gradient(90deg, rgba(6, 182, 212, 0.4), #06b6d4); }
+.taste-bar-fill.genre-2 { background: linear-gradient(90deg, rgba(245, 158, 11, 0.4), #f59e0b); }
+.taste-bar-fill.genre-3 { background: linear-gradient(90deg, rgba(236, 72, 153, 0.4), #ec4899); }
+.taste-bar-fill.genre-4 { background: linear-gradient(90deg, rgba(16, 185, 129, 0.4), #10b981); }
+
+.taste-bar-score {
+    font-size: 10px;
+    font-weight: 700;
+    color: white;
+    font-family: var(--mono);
+    text-shadow: 0 1px 3px rgba(0,0,0,0.4);
+    opacity: 0;
+    transition: opacity 300ms ease 600ms;
+}
+
+.taste-bar-fill[style*="width"]:not([style*="width: 0"]) .taste-bar-score {
+    opacity: 1;
+}
+
+.taste-bar-rank {
+    width: 22px;
+    font-size: 11px;
+    font-weight: 800;
+    color: var(--text-tertiary);
+    text-align: center;
+    flex-shrink: 0;
+}
+
+.taste-bar-rank.rank-1 { color: #fbbf24; }
+.taste-bar-rank.rank-2 { color: #c0c0c0; }
+.taste-bar-rank.rank-3 { color: #cd7f32; }
+
+.taste-evolution {
+    margin-top: 14px;
+    padding-top: 14px;
+    border-top: 1px solid var(--border);
+    display: flex;
+    gap: 16px;
+    flex-wrap: wrap;
+}
+
+.evolution-rising, .evolution-falling {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    font-size: 12px;
+    color: var(--text-tertiary);
+}
+
+.evolution-rising .evo-genre { color: var(--success); font-weight: 600; }
+.evolution-falling .evo-genre { color: var(--error); font-weight: 600; }
+
+.taste-profile-empty {
+    text-align: center;
+    padding: 12px;
+    font-size: 13px;
+    color: var(--text-tertiary);
+}
+
+.taste-profile-empty .taste-empty-hint {
+    font-size: 11px;
+    margin-top: 4px;
+    opacity: 0.7;
+}
+
 /* ─── Toast ─────────────────────────────────────────────────────────────── */
 
 .toast-container { position: fixed; top: 88px; right: 24px; z-index: 3000; display: flex; flex-direction: column; gap: 8px; }

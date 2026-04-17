@@ -6,7 +6,7 @@ SQLite-based CRUD for movies, users, ratings, and events.
 import sqlite3
 import json
 from pathlib import Path
-from datetime import datetime
+from datetime import datetime, timedelta
 from contextlib import contextmanager
 
 DB_PATH = Path(__file__).parent.parent / "app.db"
@@ -236,6 +236,185 @@ def get_user_rating(user_id: int, movie_id: int) -> float | None:
             (user_id, movie_id)
         ).fetchone()
         return row["rating"] if row else None
+
+
+# ─── Dynamic Genre Preference Computation ─────────────────────────────────────
+
+def compute_dynamic_genres(user_id: int, top_n: int = 5) -> dict:
+    """Compute a user's current genre preferences from their rating history.
+    
+    Uses recency-weighted scoring:
+      - Exponential time decay: recent ratings matter more (half-life ~14 days)
+      - Rating-value weighting: 5★ counts much more than 2★
+      - Normalizes to 0-1 scale
+    
+    Returns:
+        dict with keys:
+            "genres": list of (genre, score) tuples, sorted desc, top_n
+            "genre_scores": full dict of all genre → score
+            "total_ratings": int
+            "has_enough_data": bool (True if >= 3 ratings)
+    """
+    with get_db() as conn:
+        rows = conn.execute(
+            """SELECT r.rating, r.created_at, m.genres
+               FROM ratings r
+               JOIN movies m ON r.movie_id = m.id
+               WHERE r.user_id = ?
+               ORDER BY r.created_at DESC""",
+            (user_id,)
+        ).fetchall()
+    
+    if not rows:
+        # Fall back to static preferred_genres
+        user = get_user(user_id)
+        if user and user.get("preferred_genres"):
+            static = user["preferred_genres"]
+            return {
+                "genres": [(g, 1.0) for g in static[:top_n]],
+                "genre_scores": {g: 1.0 for g in static},
+                "total_ratings": 0,
+                "has_enough_data": False,
+            }
+        return {"genres": [], "genre_scores": {}, "total_ratings": 0, "has_enough_data": False}
+    
+    import math
+    
+    now = datetime.now()
+    genre_weights = {}   # genre → accumulated weighted score
+    genre_counts = {}    # genre → count of ratings touching this genre
+    
+    for row in rows:
+        rating = row["rating"]
+        genres = json.loads(row["genres"])
+        created_str = row["created_at"]
+        
+        # Parse timestamp
+        try:
+            created = datetime.fromisoformat(created_str)
+        except (ValueError, TypeError):
+            created = now  # fallback
+        
+        # ── Recency decay (half-life = 14 days) ──
+        days_ago = max(0, (now - created).total_seconds() / 86400)
+        recency_weight = math.exp(-0.0495 * days_ago)  # ln(2)/14 ≈ 0.0495
+        
+        # ── Rating-value weight ──
+        # Map 1-5 star to a preference signal:
+        #   5★ → 1.0 (strong positive)
+        #   4★ → 0.7
+        #   3★ → 0.3 (neutral)
+        #   2★ → -0.2 (mild negative)
+        #   1★ → -0.5 (strong negative)
+        rating_signal = {5: 1.0, 4: 0.7, 3: 0.3, 2: -0.2, 1: -0.5}.get(
+            int(round(rating)), 0.3
+        )
+        
+        combined_weight = recency_weight * rating_signal
+        
+        for genre in genres:
+            genre_weights[genre] = genre_weights.get(genre, 0) + combined_weight
+            genre_counts[genre] = genre_counts.get(genre, 0) + 1
+    
+    if not genre_weights:
+        return {"genres": [], "genre_scores": {}, "total_ratings": len(rows), "has_enough_data": False}
+    
+    # Normalize scores to [0, 1]
+    max_score = max(abs(v) for v in genre_weights.values()) or 1
+    normalized = {g: max(0, v / max_score) for g, v in genre_weights.items()}
+    
+    # Sort and pick top N
+    sorted_genres = sorted(normalized.items(), key=lambda x: x[1], reverse=True)
+    top_genres = [(g, round(s, 3)) for g, s in sorted_genres if s > 0.05][:top_n]
+    
+    return {
+        "genres": top_genres,
+        "genre_scores": {g: round(s, 3) for g, s in normalized.items()},
+        "total_ratings": len(rows),
+        "has_enough_data": len(rows) >= 3,
+    }
+
+
+def update_user_preferred_genres(user_id: int, genres: list):
+    """Update a user's preferred_genres in the database.
+    
+    Args:
+        user_id: The user ID.
+        genres: List of genre name strings (e.g. ["Thriller", "Action", "Crime"]).
+    """
+    with get_db() as conn:
+        conn.execute(
+            "UPDATE users SET preferred_genres = ? WHERE id = ?",
+            (json.dumps(genres), user_id)
+        )
+
+
+def get_genre_evolution(user_id: int, window_days: int = 7) -> dict:
+    """Compute how a user's genre preferences have shifted recently.
+    
+    Compares "recent window" preferences vs "all-time" to detect taste shifts.
+    
+    Returns:
+        dict with "rising" and "falling" genres.
+    """
+    with get_db() as conn:
+        now = datetime.now()
+        cutoff = (now - timedelta(days=window_days)).isoformat()
+        
+        # Recent ratings
+        recent_rows = conn.execute(
+            """SELECT r.rating, m.genres
+               FROM ratings r JOIN movies m ON r.movie_id = m.id
+               WHERE r.user_id = ? AND r.created_at >= ?""",
+            (user_id, cutoff)
+        ).fetchall()
+        
+        # All ratings
+        all_rows = conn.execute(
+            """SELECT r.rating, m.genres
+               FROM ratings r JOIN movies m ON r.movie_id = m.id
+               WHERE r.user_id = ?""",
+            (user_id,)
+        ).fetchall()
+    
+    def genre_dist(rows):
+        dist = {}
+        total = 0
+        for row in rows:
+            rating = row["rating"]
+            genres = json.loads(row["genres"])
+            weight = max(0, (rating - 2.5) / 2.5)  # 0 for <=2.5, up to 1.0 for 5★
+            for g in genres:
+                dist[g] = dist.get(g, 0) + weight
+                total += weight
+        if total > 0:
+            dist = {g: v / total for g, v in dist.items()}
+        return dist
+    
+    recent_dist = genre_dist(recent_rows)
+    all_dist = genre_dist(all_rows)
+    
+    rising = []
+    falling = []
+    
+    all_genres = set(list(recent_dist.keys()) + list(all_dist.keys()))
+    for g in all_genres:
+        recent_share = recent_dist.get(g, 0)
+        all_share = all_dist.get(g, 0)
+        diff = recent_share - all_share
+        if diff > 0.05:
+            rising.append((g, round(diff, 3)))
+        elif diff < -0.05:
+            falling.append((g, round(abs(diff), 3)))
+    
+    rising.sort(key=lambda x: x[1], reverse=True)
+    falling.sort(key=lambda x: x[1], reverse=True)
+    
+    return {
+        "rising": [{"genre": g, "shift": s} for g, s in rising[:3]],
+        "falling": [{"genre": g, "shift": s} for g, s in falling[:3]],
+        "recent_count": len(recent_rows),
+    }
 
 
 # ─── Event Operations ─────────────────────────────────────────────────────────
